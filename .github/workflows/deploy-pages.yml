@@ -1,0 +1,84 @@
+name: Build and Deploy Nurse Memo Office
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: github-pages
+  cancel-in-progress: true
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Checkout standalone office repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Check local packaging tests
+        run: npm test
+
+      - name: Checkout version-pinned upstream ranuts/document
+        uses: actions/checkout@v4
+        with:
+          repository: ranuts/document
+          # Known previously built commit. Deliberately do not track main silently.
+          ref: ${{ vars.RANUTS_REF || 'beb7e2fd6c2eada4c4ff21e94ac37d5c39a79fc0' }}
+          path: _vendor/ranuts-document
+          persist-credentials: false
+
+      - name: Record upstream revision
+        id: upstream
+        run: echo "commit=$(git -C _vendor/ranuts-document rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.4.0
+          run_install: false
+
+      - name: Install upstream dependencies
+        working-directory: _vendor/ranuts-document
+        run: pnpm install --frozen-lockfile
+
+      - name: Build unmodified upstream editing engine
+        working-directory: _vendor/ranuts-document
+        run: pnpm run build
+
+      - name: Adapt editor distribution for GitHub Pages
+        env:
+          RANUTS_REVISION: ${{ steps.upstream.outputs.commit }}
+          PAGES_BASE_PATH: ${{ vars.PAGES_BASE_PATH }}
+        run: node scripts/prepare-pages.mjs
+
+      - name: Verify Pages artifact before deployment
+        env:
+          PAGES_BASE_PATH: ${{ vars.PAGES_BASE_PATH }}
+        run: node scripts/verify-site.mjs
+
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload complete office site
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: ./site
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
