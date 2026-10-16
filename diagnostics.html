@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Nurse Memo Office — Integration Test</title>
+  <style>
+    :root { font-family: system-ui, -apple-system, Segoe UI, Arial, sans-serif; color: #1b2d42; background: #edf1f6; }
+    * { box-sizing: border-box; }
+    body { margin: 0; }
+    header { display: flex; gap: 20px; align-items: center; justify-content: space-between; flex-wrap: wrap; padding: 13px 20px; color: white; background: #274c71; }
+    header strong { display: block; font-size: 19px; }
+    header small { display: block; opacity: .85; }
+    .link { color: white; text-decoration: underline; }
+    main { padding: 14px; max-width: 1900px; margin: auto; }
+    .panel { background: white; border: 1px solid #d8e0e8; border-radius: 8px; padding: 12px; margin-bottom: 12px; }
+    .controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+    button, .file-label { font: inherit; padding: 8px 12px; border: 1px solid #bac9d9; background: #f8fafc; color: #183f64; border-radius: 5px; cursor: pointer; }
+    button:focus-visible, .file-label:focus-within { outline: 2px solid #1669aa; }
+    button.primary { background: #285b89; color: white; border-color: #285b89; }
+    button:disabled { cursor: wait; opacity: .45; }
+    .file-label input { display: none; }
+    #status { font-weight: 600; padding: 7px 0; }
+    #status.error { color: #a32f2f; }
+    .help { color: #526679; font-size: 13px; margin: 8px 0 0; }
+    iframe { display: block; height: min(76vh, 900px); min-height: 540px; width: 100%; border: 1px solid #cad4de; background: white; border-radius: 5px; }
+    details { margin-top: 10px; font-size: 13px; }
+    pre { max-height: 140px; overflow: auto; white-space: pre-wrap; font-size: 12px; }
+  </style>
+</head>
+<body>
+  <header><div><strong>Nurse Memo Office</strong><small>Independent DOCX integration test — fictional documents only</small></div><a class="link" href="./">Office homepage</a></header>
+  <main>
+    <section class="panel">
+      <div class="controls">
+        <button class="primary" id="normal">Open normal Night Memo</button>
+        <button id="stress">Open 72-row stress memo</button>
+        <label class="file-label">Open local DOCX <input id="file" type="file" accept=".docx"></label>
+        <button id="save">Save DOCX</button>
+        <button id="pdf">Export PDF</button>
+        <button id="reload">Restart editor</button>
+        <a href="./editor.html?new=docx" target="_blank" rel="noopener noreferrer">Open standalone Word editor</a>
+      </div>
+      <div role="status" aria-live="polite" id="status">Starting editor. A cold browser session may take several seconds…</div>
+      <p class="help">The iframe and tests run on this same GitHub Pages site; no Nurse Memo login or Supabase connection is needed. Start by opening the normal memo, editing a table cell, and exporting DOCX/PDF.</p>
+      <details><summary>Editor events and errors</summary><pre id="log"></pre></details>
+    </section>
+    <iframe id="editor" title="Document editor"></iframe>
+  </main>
+<script>
+(() => {
+  const frame = document.getElementById('editor');
+  const log = document.getElementById('log');
+  const status = document.getElementById('status');
+  const buttons = [...document.querySelectorAll('button:not(#reload)')];
+  let ready = false;
+  let busy = false;
+  let count = 0;
+  let pending = null;
+  const origin = location.origin;
+  function info(message, error = false) {
+    status.textContent = message;
+    status.classList.toggle('error', error);
+    const time = new Date().toLocaleTimeString();
+    log.textContent = `[${time}] ${message}\n` + log.textContent.slice(0, 9000);
+  }
+  function controls() { for (const button of buttons) button.disabled = !ready || busy; }
+  function bootstrap() {
+    ready = false;
+    busy = false;
+    pending = null;
+    controls();
+    info('Starting editor. A cold browser session may take several seconds…');
+    const url = new URL('./editor.html', location.href);
+    url.searchParams.set('embed', '1');
+    url.searchParams.set('embedOrigin', origin);
+    url.searchParams.set('locale', 'en');
+    frame.src = url.href;
+  }
+  const timer = setTimeout(() => { if (!ready) info('Editor has not signalled ready after 60 seconds. Try Restart editor or inspect browser Console.', true); }, 60000);
+  window.addEventListener('message', event => {
+    if (event.origin !== origin || event.source !== frame.contentWindow) return;
+    const message = event.data;
+    if (!message || typeof message.type !== 'string' || !message.type.startsWith('document:')) return;
+    if (message.type === 'document:ready') {
+      ready = true;
+      clearTimeout(timer);
+      info('Editor connected. Open a sample DOCX to test editing.');
+      controls();
+      return;
+    }
+    if (message.type === 'document:dirty-changed') return;
+    if (message.id !== pending?.id) return;
+    const request = pending;
+    pending = null;
+    clearTimeout(request.timer);
+    busy = false;
+    controls();
+    if (message.type === 'document:error') request.reject(new Error(message.payload?.message || 'Editor returned an error'));
+    else request.resolve(message);
+  });
+  function request(type, payload = {}) {
+    if (!ready) return Promise.reject(new Error('Editor is not ready'));
+    if (pending) return Promise.reject(new Error('Editor is processing a previous action'));
+    busy = true;
+    controls();
+    return new Promise((resolve, reject) => {
+      const id = `office-test-${++count}`;
+      const timeout = setTimeout(() => {
+        pending = null;
+        busy = false;
+        controls();
+        reject(new Error(`${type} timed out after 120 seconds`));
+      }, 120000);
+      pending = { id, resolve, reject, timer: timeout };
+      frame.contentWindow.postMessage({id, type, payload}, origin);
+    });
+  }
+  async function openBytes(bytes, fileName) {
+    info(`Opening ${fileName}…`);
+    await request('document:open-buffer', {fileName, buffer: bytes, readonly: false});
+    info(`${fileName} opened. Try editing, then Save DOCX or Export PDF.`);
+  }
+  async function openFixture(name) {
+    const result = await fetch(new URL(`./fixtures/${name}`, location.href));
+    if (!result.ok) throw new Error(`Could not fetch fixture (${result.status})`);
+    await openBytes(await result.arrayBuffer(), name);
+  }
+  function download(file, filename) {
+    if (!(file instanceof Blob)) throw new Error('No file returned by editor');
+    const url = URL.createObjectURL(file);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.append(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 30000);
+  }
+  async function save(ext) {
+    info(`Exporting ${ext}…`);
+    const result = await request('document:save', {targetExt: ext});
+    const file = result.payload?.file;
+    if (ext === 'PDF') {
+      const head = String.fromCharCode(...new Uint8Array(await file.slice(0,5).arrayBuffer()));
+      if (head !== '%PDF-') throw new Error('Editor returned an invalid PDF');
+    }
+    download(file,`night-memo-${ext.toLowerCase()}-export.${ext.toLowerCase()}`);
+    info(`${ext} export received (${file.size} bytes).`);
+  }
+  function run(action) { Promise.resolve().then(action).catch(error => info(error.message || String(error),true)); }
+  document.getElementById('normal').onclick = () => run(() => openFixture('night-memo-normal-10.docx'));
+  document.getElementById('stress').onclick = () => run(() => openFixture('night-memo-stress-72-38.docx'));
+  document.getElementById('save').onclick = () => run(() => save('DOCX'));
+  document.getElementById('pdf').onclick = () => run(() => save('PDF'));
+  document.getElementById('file').onchange = event => {
+    const file = event.target.files?.[0];
+    if (file) run(async () => openBytes(await file.arrayBuffer(), file.name));
+  };
+  document.getElementById('reload').onclick = bootstrap;
+  bootstrap();
+})();
+</script>
+</body>
+</html>
