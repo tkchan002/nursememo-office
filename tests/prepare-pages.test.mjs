@@ -35,7 +35,10 @@ test('synthetic full-site preparation produces real route aliases and uncompress
   try {
     const src=join(temp,'upstream'); const dst=join(temp,'site');
     mkdirSync(join(src,'sdkjs/common/wasm/x2t'),{recursive:true});
-    mkdirSync(join(src,'web-apps'),{recursive:true});
+    mkdirSync(join(src,'web-apps/apps/api/documents'),{recursive:true});
+    mkdirSync(join(src,'web-apps/apps/documenteditor/main'),{recursive:true});
+    writeFileSync(join(src,'web-apps/apps/documenteditor/main/index.html'), '<!doctype html><title>ONLYOFFICE editor</title>');
+    writeFileSync(join(src,'web-apps/apps/api/documents/api.js'), 'function editorPath(path){ var index = \"/index.html\"; path += index; return path; }');
     mkdirSync(join(src,'assets'),{recursive:true});
     for(const name of ['index.html','editor.html','history.html']) writeFileSync(join(src,name),`<script type="module" src="/assets/editor.js"></script><a href="/editor?new=docx">Create</a>`);
     for(const name of ['LICENSE','NOTICE'])writeFileSync(join(src,name),'Upstream copyright notice');
@@ -50,5 +53,24 @@ test('synthetic full-site preparation produces real route aliases and uncompress
     assert.match(readFileSync(join(dst,'editor.html'),'utf8'),/\/nursememo-office\/assets\/editor.js/);
     assert.match(readFileSync(join(dst,'assets/editor.js'),'utf8'),/\/nursememo-office\/sdkjs\/common\/wasm\/x2t\/x2t.wasm'/);
     assert.ok(existsSync(join(dst,'fixtures/night-memo-normal-10.docx')));
+    const apiText = readFileSync(join(dst,'web-apps/apps/api/documents/api.js'),'utf8');
+    assert.match(apiText, /var index = \"\/index\.html\"/);
+    assert.doesNotMatch(apiText, /\/nursememo-office\/index\.html/);
+    const path = '/nursememo-office/web-apps/apps/documenteditor/main' + '/index.html';
+    assert.ok(existsSync(join(dst,path.replace(base,''))), 'nested editor main/index.html must exist');
   } finally {rmSync(temp,{recursive:true,force:true});}
+});
+
+test('ONLYOFFICE SDK must keep internal /index.html path suffix unmodified', () => {
+  const code = 'var index = \"/index.html\"; path += index;';
+  const updated = rewriteVendorText(code, base);
+  assert.equal(updated, code);
+  assert.equal(
+    '/nursememo-office/web-apps/apps/documenteditor/main' + '/index.html',
+    '/nursememo-office/web-apps/apps/documenteditor/main/index.html'
+  );
+  assert.notEqual(
+    '/nursememo-office/web-apps/apps/documenteditor/main' + '/nursememo-office/index.html',
+    '/nursememo-office/web-apps/apps/documenteditor/main/index.html'
+  );
 });

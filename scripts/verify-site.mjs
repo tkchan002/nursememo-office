@@ -8,11 +8,19 @@ const mustExist = [
   '404.html','.nojekyll','sdkjs','web-apps','LICENSE','NOTICE',
   'sdkjs/common/wasm/x2t/x2t.wasm','office-build.json',
   'diagnostics.html','fixtures/night-memo-normal-10.docx','fixtures/night-memo-stress-72-38.docx',
+  'web-apps/apps/api/documents/api.js','web-apps/apps/documenteditor/main/index.html',
 ];
 for (const item of mustExist) if (!existsSync(join(root,item))) throw new Error(`Pages distribution missing ${item}`);
 const meta = JSON.parse(await fs.readFile(join(root,'office-build.json'),'utf8'));
 const expected = chooseBase({repo:process.env.GITHUB_REPOSITORY || 'tkchan002/nursememo-office',override:process.env.PAGES_BASE_PATH || ''});
 if (meta.siteBase !== expected) throw new Error(`Incorrect base: ${meta.siteBase} vs ${expected}`);
+if (meta.packagingFix !== 'onlyoffice-nested-index-path-v2') throw new Error('Old editor packaging version');
+const sdkApi = await fs.readFile(join(root,'web-apps/apps/api/documents/api.js'),'utf8');
+// The ONLYOFFICE DocEditor API appends '/index.html' to the full
+// documenteditor/main path. Treating it as site-root is a hard failure.
+if (sdkApi.includes(`${meta.siteBase}index.html`) && /path\s*\+=\s*index/.test(sdkApi)) {
+  throw new Error('ONLYOFFICE internal /index.html path suffix was incorrectly rebased');
+}
 const entry = await fs.readFile(join(root,'editor.html'),'utf8');
 if (!entry.includes('script') || !entry.includes('assets')) throw new Error('Upstream editor entry lacks expected script/assets');
 const wasm = await fs.open(join(root,'sdkjs/common/wasm/x2t/x2t.wasm'),'r');

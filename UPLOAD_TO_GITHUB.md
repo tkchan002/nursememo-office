@@ -1,3 +1,5 @@
+**IMPORTANT: If you are replacing the original nursememo-office project because the inner editing frame showed a 404, use this corrected archive. Confirm `packagingFix` in office-build.json after deploying.**
+
 # Upload checklist: nursememo-office
 
 - [ ] New repository **`tkchan002/nursememo-office`**, branch `main`.

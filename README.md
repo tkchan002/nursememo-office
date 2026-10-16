@@ -1,3 +1,5 @@
+> **2026-10-16 routing fix:** See [FIX_NESTED_ONLYOFFICE_404.md](FIX_NESTED_ONLYOFFICE_404.md). The original package rewrote the inner ONLYOFFICE `/index.html` path suffix incorrectly.
+
 # Nurse Memo Office — Independent GitHub Pages editor
 
 This is a **standalone GitHub Pages deployment wrapper** for [ranuts/document](https://github.com/ranuts/document), for testing the DOCX editor used by Nurse Memo's **Patrol Night** page.

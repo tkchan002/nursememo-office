@@ -1,0 +1,4 @@
+node_modules/
+_vendor/
+site/
+.DS_Store

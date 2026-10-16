@@ -26,7 +26,10 @@ const roots = [
   'favicon.ico','favicon.svg','sw.js','manifest.json',
   'home.css','landing.css','lang-switch.js','sw-register.js','open-local.js',
   'landing-prefetch.js','theme-presentation.js','onlyoffice-v7-iframe-patch.js',
-  'ran-tokens.css','index.html','editor.html','history.html','embed-demo.html',
+  // NEVER rewrite '/index.html' here: ONLYOFFICE api.js uses it as a PATH SUFFIX
+  // appended to '/web-apps/apps/documenteditor/main'. Rewriting yields
+  // '/web-apps/apps/documenteditor/main/nursememo-office/index.html' (404).
+  'ran-tokens.css','editor.html','history.html','embed-demo.html',
   'help','changelog','embed-demo.html',
 ];
 const rootsPattern = roots.map(s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|');
@@ -41,6 +44,8 @@ export function rewriteVendorText(content, base) {
     .replace(quotedRoot, (_match, prefix, name) => `${prefix}${base}${name}`)
     .replace(quotedRoute, (_match, prefix, route) => `${prefix}${base}${cleanRoutes.get(route)}`)
     .replace(cssRoot, (_match, prefix, name) => `${prefix}${base}${name}`);
+  // Root landing-page links can be rebased only inside the top-level HTML
+  // entry points; never change generic '/index.html' in nested JS.
   // Vite-hashed global token CSS is a real upstream root-absolute asset.
   result = result.replace(/(["'`(=\s])\/ran-tokens\.([a-f0-9]+)\.css/g,
     (_match, prefix, hash) => `${prefix}${base}ran-tokens.${hash}.css`);
@@ -83,7 +88,13 @@ export async function prepare({
   await walk(destination, async (file, name) => {
     if (!textExtensions.has(extname(name)) || name === 'LICENSE' || name === 'NOTICE') return;
     const old = await fs.readFile(file, 'utf8');
-    const updated = rewriteVendorText(old, base);
+    let updated = rewriteVendorText(old, base);
+    // These top-level HTML files are application entry points. Unlike the
+    // ONLYOFFICE SDK scripts, their /index.html links refer to site root.
+    if (dirname(file) === destination && extname(name) === '.html') {
+      updated = updated.replace(/([\"'`(=\s])\/index\.html(?=[\"'`?#\s)]|$)/g,
+        (_match, prefix) => `${prefix}${base}index.html`);
+    }
     if (old !== updated) { await fs.writeFile(file, updated); changed++; }
     scanned++;
   });
@@ -127,6 +138,7 @@ export async function prepare({
     repository:process.env.GITHUB_REPOSITORY || 'tkchan002/nursememo-office',
     sourceRepository:'https://github.com/ranuts/document',sourceRevision:revision,
     licence:'AGPL-3.0',sourceRequired:true,
+    packagingFix:'onlyoffice-nested-index-path-v2',
     note:'Independent GitHub Pages office editor; not the Nurse Memo app.'};
   await fs.writeFile(join(destination,'office-build.json'),JSON.stringify(meta,null,2)+'\n');
   let siteBytes = 0; let siteFiles = 0;

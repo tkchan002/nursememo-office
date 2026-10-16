@@ -42,7 +42,7 @@
         <a href="./editor.html?new=docx" target="_blank" rel="noopener noreferrer">Open standalone Word editor</a>
       </div>
       <div role="status" aria-live="polite" id="status">Starting editor. A cold browser session may take several seconds…</div>
-      <p class="help">The iframe and tests run on this same GitHub Pages site; no Nurse Memo login or Supabase connection is needed. Start by opening the normal memo, editing a table cell, and exporting DOCX/PDF.</p>
+      <p class="help">The iframe and tests run on this same GitHub Pages site; no Nurse Memo login or Supabase connection is needed. Start by opening the normal memo, confirming the internal editor loads (not a 404), editing a table cell, and exporting DOCX/PDF.</p>
       <details><summary>Editor events and errors</summary><pre id="log"></pre></details>
     </section>
     <iframe id="editor" title="Document editor"></iframe>
@@ -116,10 +116,47 @@
       frame.contentWindow.postMessage({id, type, payload}, origin);
     });
   }
+  // document:opened acknowledges the API operation, but does NOT guarantee
+  // the nested ONLYOFFICE editing frame loaded. The original deployment
+  // returned success even though that frame was GitHub Pages' custom 404.
+  async function verifyNestedEditorFrame() {
+    let nested;
+    for (let attempt = 0; attempt < 30; attempt++) {
+      try {
+        const doc = frame.contentDocument;
+        nested = [...(doc?.querySelectorAll('iframe') || [])]
+          .find(node => node.src?.includes('/web-apps/apps/'));
+      } catch {
+        // Origin isolation can prevent inspection in other host setups.
+        return {verified:false, reason:'nested frame is not accessible'};
+      }
+      if (nested) break;
+      await new Promise(resolve => setTimeout(resolve, 200));
+    }
+    if (!nested) return {verified:false, reason:'nested editor frame not detected'};
+    const url = new URL(nested.src, location.href);
+    if (url.origin !== location.origin) {
+      return {verified:false, reason:'nested editor is on another origin'};
+    }
+    if (!url.pathname.includes('/web-apps/apps/')) {
+      throw new Error(`Unexpected editor frame path: ${url.pathname}`);
+    }
+    const response = await fetch(url.href, {method:'HEAD', cache:'no-store'});
+    if (!response.ok) {
+      throw new Error(`ONLYOFFICE internal editor frame returned HTTP ${response.status}: ${url.pathname}`);
+    }
+    return {verified:true, url:url.pathname};
+  }
   async function openBytes(bytes, fileName) {
     info(`Opening ${fileName}…`);
     await request('document:open-buffer', {fileName, buffer: bytes, readonly: false});
-    info(`${fileName} opened. Try editing, then Save DOCX or Export PDF.`);
+    info(`${fileName} accepted by document API. Checking the internal editing frame…`);
+    const result = await verifyNestedEditorFrame();
+    if (result.verified) {
+      info(`${fileName}: internal editor frame is reachable. Confirm that the document is visible, then try Save DOCX or Export PDF.`);
+    } else {
+      info(`${fileName}: API accepted the file, but visual rendering was NOT verified (${result.reason}). Inspect the editor area before saving.`, true);
+    }
   }
   async function openFixture(name) {
     const result = await fetch(new URL(`./fixtures/${name}`, location.href));
